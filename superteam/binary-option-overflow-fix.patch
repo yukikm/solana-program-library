@@ -1,0 +1,242 @@
+From 28001a976af8ff779bfba07bad7c755f8f4bfbbc Mon Sep 17 00:00:00 2001
+From: 0xOpenClaw <0xopenclaw@users.noreply.github.com>
+Date: Sat, 14 Feb 2026 20:30:12 +0000
+Subject: [PATCH] binary-option: prevent overflow in trade amount calculations
+
+---
+ binary-option/program/src/processor.rs | 82 ++++++++++++++++++--------
+ 1 file changed, 58 insertions(+), 24 deletions(-)
+
+diff --git a/binary-option/program/src/processor.rs b/binary-option/program/src/processor.rs
+index 43286e3..f9b9133 100644
+--- a/binary-option/program/src/processor.rs
++++ b/binary-option/program/src/processor.rs
+@@ -67,6 +67,11 @@ pub fn process_initialize_binary_option(
+     accounts: &[AccountInfo],
+     decimals: u8,
+ ) -> ProgramResult {
++    // Prevent u64 overflows when computing 10^decimals during trading.
++    // 10^20 already exceeds u64::MAX.
++    if decimals > 19 {
++        return Err(BinaryOptionError::AmountOverflow.into());
++    }
+     let account_info_iter = &mut accounts.iter();
+     let binary_option_account_info = next_account_info(account_info_iter)?;
+     let escrow_mint_info = next_account_info(account_info_iter)?;
+@@ -237,11 +242,24 @@ pub fn process_trade(
+         &[bump_seed],
+     ];
+ 
++    // Helpers: prevent arithmetic overflow (can otherwise wrap in release builds)
++    let checked_mul = |qty: u64, price: u64| -> Result<u64, ProgramError> {
++        qty.checked_mul(price)
++            .ok_or_else(|| BinaryOptionError::AmountOverflow.into())
++    };
++    let checked_sub = |a: u64, b: u64| -> Result<u64, ProgramError> {
++        a.checked_sub(b)
++            .ok_or_else(|| BinaryOptionError::AmountOverflow.into())
++    };
++
+     // Validate data
+     let total_price = buy_price
+         .checked_add(sell_price)
+         .ok_or(BinaryOptionError::TradePricesIncorrect)?;
+-    if total_price != u64::pow(10, binary_option.decimals as u32) {
++    let expected_total_price = 10u64
++        .checked_pow(binary_option.decimals as u32)
++        .ok_or(BinaryOptionError::AmountOverflow)?;
++    if total_price != expected_total_price {
+         return Err(BinaryOptionError::TradePricesIncorrect.into());
+     }
+     if binary_option.settled {
+@@ -328,7 +346,7 @@ pub fn process_trade(
+                 escrow_account_info,
+                 buyer_account_info,
+                 authority_info,
+-                n * sell_price,
++                checked_mul(n, sell_price)?,
+                 seeds,
+             )?;
+             spl_token_transfer_signed(
+@@ -336,7 +354,7 @@ pub fn process_trade(
+                 escrow_account_info,
+                 seller_account_info,
+                 authority_info,
+-                n * buy_price,
++                checked_mul(n, buy_price)?,
+                 seeds,
+             )?;
+             b_s -= n;
+@@ -369,12 +387,14 @@ pub fn process_trade(
+             )?;
+             b_s -= n_b;
+             s_l -= n_s;
++            let buyer_mint_qty = checked_sub(n, n_b)?;
++            let seller_mint_qty = checked_sub(n, n_s)?;
+             spl_mint_to(
+                 token_program_info,
+                 buyer_long_token_account_info,
+                 long_token_mint_info,
+                 authority_info,
+-                n - n_b,
++                buyer_mint_qty,
+                 seeds,
+             )?;
+             spl_mint_to(
+@@ -382,31 +402,33 @@ pub fn process_trade(
+                 seller_short_token_account_info,
+                 short_token_mint_info,
+                 authority_info,
+-                n - n_s,
++                seller_mint_qty,
+                 seeds,
+             )?;
+-            b_l += n - n_b;
+-            s_s += n - n_s;
++            b_l = b_l.checked_add(buyer_mint_qty)
++                .ok_or_else(|| BinaryOptionError::AmountOverflow.into())?;
++            s_s = s_s.checked_add(seller_mint_qty)
++                .ok_or_else(|| BinaryOptionError::AmountOverflow.into())?;
+             spl_token_transfer(
+                 token_program_info,
+                 buyer_account_info,
+                 escrow_account_info,
+                 buyer_info,
+-                (n - n_b) * buy_price,
++                checked_mul(buyer_mint_qty, buy_price)?,
+             )?;
+             spl_token_transfer(
+                 token_program_info,
+                 seller_account_info,
+                 escrow_account_info,
+                 seller_info,
+-                (n - n_s) * sell_price,
++                checked_mul(seller_mint_qty, sell_price)?,
+             )?;
+             spl_token_transfer_signed(
+                 token_program_info,
+                 escrow_account_info,
+                 buyer_account_info,
+                 authority_info,
+-                n_b * sell_price,
++                checked_mul(n_b, sell_price)?,
+                 seeds,
+             )?;
+             spl_token_transfer_signed(
+@@ -414,13 +436,21 @@ pub fn process_trade(
+                 escrow_account_info,
+                 seller_account_info,
+                 authority_info,
+-                n_s * buy_price,
++                checked_mul(n_s, buy_price)?,
+                 seeds,
+             )?;
+-            if n > n_b + n_s {
+-                binary_option.increment_supply(n - n_b - n_s)?;
++            let nb_plus_ns = n_b
++                .checked_add(n_s)
++                .ok_or_else(|| BinaryOptionError::AmountOverflow.into())?;
++            let delta = if n > nb_plus_ns {
++                checked_sub(n, nb_plus_ns)?
++            } else {
++                checked_sub(nb_plus_ns, n)?
++            };
++            if n > nb_plus_ns {
++                binary_option.increment_supply(delta)?;
+             } else {
+-                binary_option.decrement_supply(n - n_b - n_s)?;
++                binary_option.decrement_supply(delta)?;
+             }
+         }
+         /*
+@@ -448,28 +478,30 @@ pub fn process_trade(
+             )?;
+             b_s -= n;
+             s_l -= n_s;
++            let seller_mint_qty = checked_sub(n, n_s)?;
+             spl_mint_to(
+                 token_program_info,
+                 seller_short_token_account_info,
+                 short_token_mint_info,
+                 authority_info,
+-                n - n_s,
++                seller_mint_qty,
+                 seeds,
+             )?;
+-            s_s += n - n_s;
++            s_s = s_s.checked_add(seller_mint_qty)
++                .ok_or_else(|| BinaryOptionError::AmountOverflow.into())?;
+             spl_token_transfer(
+                 token_program_info,
+                 seller_account_info,
+                 escrow_account_info,
+                 seller_info,
+-                (n - n_s) * sell_price,
++                checked_mul(seller_mint_qty, sell_price)?,
+             )?;
+             spl_token_transfer_signed(
+                 token_program_info,
+                 escrow_account_info,
+                 seller_account_info,
+                 authority_info,
+-                n_s * buy_price,
++                checked_mul(n_s, buy_price)?,
+                 seeds,
+             )?;
+             spl_token_transfer_signed(
+@@ -477,7 +509,7 @@ pub fn process_trade(
+                 escrow_account_info,
+                 buyer_account_info,
+                 authority_info,
+-                n * sell_price,
++                checked_mul(n, sell_price)?,
+                 seeds,
+             )?;
+             binary_option.decrement_supply(n_s)?;
+@@ -507,28 +539,30 @@ pub fn process_trade(
+             )?;
+             b_s -= n_b;
+             s_l -= n;
++            let buyer_mint_qty = checked_sub(n, n_b)?;
+             spl_mint_to(
+                 token_program_info,
+                 buyer_long_token_account_info,
+                 long_token_mint_info,
+                 authority_info,
+-                n - n_b,
++                buyer_mint_qty,
+                 seeds,
+             )?;
+-            b_l += n - n_b;
++            b_l = b_l.checked_add(buyer_mint_qty)
++                .ok_or_else(|| BinaryOptionError::AmountOverflow.into())?;
+             spl_token_transfer(
+                 token_program_info,
+                 buyer_account_info,
+                 escrow_account_info,
+                 buyer_info,
+-                (n - n_b) * buy_price,
++                checked_mul(buyer_mint_qty, buy_price)?,
+             )?;
+             spl_token_transfer_signed(
+                 token_program_info,
+                 escrow_account_info,
+                 buyer_account_info,
+                 authority_info,
+-                n_b * sell_price,
++                checked_mul(n_b, sell_price)?,
+                 seeds,
+             )?;
+             spl_token_transfer_signed(
+@@ -536,7 +570,7 @@ pub fn process_trade(
+                 escrow_account_info,
+                 seller_account_info,
+                 authority_info,
+-                n * buy_price,
++                checked_mul(n, buy_price)?,
+                 seeds,
+             )?;
+             binary_option.decrement_supply(n_b)?;
+-- 
+2.43.0
+
