@@ -79,6 +79,49 @@ async fn test_name_service() {
     let name = "bonfida";
     let sol_subdomains_class = Keypair::new();
 
+    // Regression test: if a parent name is provided, the parent owner account must also be
+    // provided. Previously, omitting it would trigger an internal `.unwrap()` panic and abort.
+    {
+        let bad_name = "missing-parent-owner";
+        let hashed_bad_name: Vec<u8> = hashv(&[(HASH_PREFIX.to_owned() + bad_name).as_bytes()])
+            .as_ref()
+            .to_vec();
+        let (bad_name_account_key, _) = get_seeds_and_key(
+            &program_id,
+            hashed_bad_name.clone(),
+            Some(&sol_subdomains_class.pubkey()),
+            Some(&root_name_account_key),
+        );
+
+        let ix = create(
+            program_id,
+            NameRegistryInstruction::Create {
+                hashed_name: hashed_bad_name,
+                lamports: rent.minimum_balance(space.saturating_add(NameRecordHeader::LEN)),
+                space: space as u32,
+            },
+            bad_name_account_key,
+            ctx.payer.pubkey(),
+            owner.pubkey(),
+            Some(sol_subdomains_class.pubkey()),
+            Some(root_name_account_key),
+            None, // parent owner intentionally omitted
+        )
+        .unwrap();
+
+        let err = sign_send_instruction(&mut ctx, ix, vec![&sol_subdomains_class])
+            .await
+            .unwrap_err();
+        assert_instruction_error(&err, solana_sdk::instruction::InstructionError::NotEnoughAccountKeys);
+
+        // update blockhash to prevent losing subsequent txns to dedup
+        ctx.last_blockhash = ctx
+            .banks_client
+            .get_new_latest_blockhash(&ctx.last_blockhash)
+            .await
+            .unwrap();
+    }
+
     let hashed_name: Vec<u8> = hashv(&[(HASH_PREFIX.to_owned() + name).as_bytes()])
         .as_ref()
         .to_vec();
@@ -187,13 +230,14 @@ async fn test_name_service() {
     )
     .unwrap();
 
-    sign_send_instruction(
+    let err = sign_send_instruction(
         &mut ctx,
         update_instruction.clone(),
         vec![&sol_subdomains_class],
     )
     .await
     .unwrap_err();
+    assert_instruction_error(&err, solana_sdk::instruction::InstructionError::InvalidArgument);
 
     let new_space = space.checked_mul(2).unwrap();
     let payer_key = ctx.payer.pubkey();
@@ -257,4 +301,15 @@ pub async fn sign_send_instruction(
         .process_transaction(transaction)
         .await
         .map_err(|e| e.into())
+}
+
+pub fn assert_instruction_error(err: &TransportError, expected: solana_sdk::instruction::InstructionError) {
+    use solana_sdk::transaction::TransactionError;
+
+    match err {
+        TransportError::TransactionError(TransactionError::InstructionError(_, actual)) => {
+            assert_eq!(actual, &expected);
+        }
+        other => panic!("unexpected error type: {other:?}"),
+    }
 }
