@@ -14,6 +14,8 @@ use {
         pubkey::Pubkey,
         rent::Rent,
         system_instruction,
+        system_program,
+        sysvar,
     },
     spl_token::{
         instruction::{set_authority, AuthorityType},
@@ -36,6 +38,21 @@ pub fn create_spl_token_account_signed<'a>(
     rent_sysvar_info: &AccountInfo<'a>,
     rent: &Rent,
 ) -> Result<(), ProgramError> {
+    if system_info.key != &system_program::id() {
+        msg!("Invalid system program provided to SPL token CPI helper");
+        return Err(ProgramError::IncorrectProgramId);
+    }
+
+    if spl_token_info.key != &spl_token::id() {
+        msg!("Invalid SPL Token program provided to SPL token CPI helper");
+        return Err(ProgramError::IncorrectProgramId);
+    }
+
+    if rent_sysvar_info.key != &sysvar::rent::id() {
+        msg!("Invalid rent sysvar provided to SPL token CPI helper");
+        return Err(ProgramError::IncorrectProgramId);
+    }
+
     let create_account_instruction = system_instruction::create_account(
         payer_info.key,
         token_account_info.key,
@@ -100,6 +117,11 @@ pub fn transfer_spl_tokens<'a>(
     amount: u64,
     spl_token_info: &AccountInfo<'a>,
 ) -> ProgramResult {
+    if spl_token_info.key != &spl_token::id() {
+        msg!("Invalid SPL Token program provided to SPL token CPI helper");
+        return Err(ProgramError::IncorrectProgramId);
+    }
+
     let transfer_instruction = spl_token::instruction::transfer(
         &spl_token::id(),
         source_info.key,
@@ -131,6 +153,11 @@ pub fn mint_spl_tokens_to<'a>(
     amount: u64,
     spl_token_info: &AccountInfo<'a>,
 ) -> ProgramResult {
+    if spl_token_info.key != &spl_token::id() {
+        msg!("Invalid SPL Token program provided to SPL token CPI helper");
+        return Err(ProgramError::IncorrectProgramId);
+    }
+
     let mint_to_ix = spl_token::instruction::mint_to(
         &spl_token::id(),
         mint_info.key,
@@ -165,6 +192,11 @@ pub fn transfer_spl_tokens_signed<'a>(
     amount: u64,
     spl_token_info: &AccountInfo<'a>,
 ) -> ProgramResult {
+    if spl_token_info.key != &spl_token::id() {
+        msg!("Invalid SPL Token program provided to SPL token CPI helper");
+        return Err(ProgramError::IncorrectProgramId);
+    }
+
     let (authority_address, bump_seed) = Pubkey::find_program_address(authority_seeds, program_id);
 
     if authority_address != *authority_info.key {
@@ -215,6 +247,11 @@ pub fn burn_spl_tokens_signed<'a>(
     amount: u64,
     spl_token_info: &AccountInfo<'a>,
 ) -> ProgramResult {
+    if spl_token_info.key != &spl_token::id() {
+        msg!("Invalid SPL Token program provided to SPL token CPI helper");
+        return Err(ProgramError::IncorrectProgramId);
+    }
+
     let (authority_address, bump_seed) = Pubkey::find_program_address(authority_seeds, program_id);
 
     if authority_address != *authority_info.key {
@@ -419,6 +456,11 @@ pub fn set_spl_token_account_authority<'a>(
     authority_type: AuthorityType,
     spl_token_info: &AccountInfo<'a>,
 ) -> Result<(), ProgramError> {
+    if spl_token_info.key != &spl_token::id() {
+        msg!("Invalid SPL Token program provided to SPL token CPI helper");
+        return Err(ProgramError::IncorrectProgramId);
+    }
+
     let set_authority_ix = set_authority(
         &spl_token::id(),
         account_info.key,
