@@ -201,6 +201,11 @@ impl Processor {
         let rent = &Rent::from_account_info(rent_info)?;
         let token_program_info = next_account_info(account_info_iter)?;
 
+        // Security: only the canonical SPL Token program is supported.
+        if *token_program_info.key != spl_token::id() {
+            return Err(PoolError::InvalidTokenProgram.into());
+        }
+
         let mut pool = Pool::try_from_slice(&pool_account_info.data.borrow())?;
         // Pool account should not be already initialized
         if pool.is_initialized() {
@@ -330,6 +335,23 @@ impl Processor {
 
         let pool = Pool::try_from_slice(&pool_account_info.data.borrow())?;
 
+        // Validate critical accounts against pool state.
+        if pool.deposit_account != *pool_deposit_token_account_info.key {
+            return Err(PoolError::InvalidDepositAccount.into());
+        }
+        if pool.token_pass_mint != *token_pass_mint_info.key {
+            return Err(PoolError::InvalidTokenMint.into());
+        }
+        if pool.token_fail_mint != *token_fail_mint_info.key {
+            return Err(PoolError::InvalidTokenMint.into());
+        }
+        if pool.token_program_id != *token_program_id_info.key {
+            return Err(PoolError::InvalidTokenProgram.into());
+        }
+        if pool.token_program_id != spl_token::id() {
+            return Err(PoolError::InvalidTokenProgram.into());
+        }
+
         if clock.slot > pool.mint_end_slot {
             return Err(PoolError::InvalidSlotForDeposit.into());
         }
@@ -411,6 +433,16 @@ impl Processor {
         if pool.token_fail_mint != *token_fail_mint_info.key {
             return Err(PoolError::InvalidTokenMint.into());
         }
+        if pool.deposit_account != *pool_deposit_token_account_info.key {
+            return Err(PoolError::InvalidDepositAccount.into());
+        }
+        if pool.token_program_id != *token_program_id_info.key {
+            return Err(PoolError::InvalidTokenProgram.into());
+        }
+        if pool.token_program_id != spl_token::id() {
+            return Err(PoolError::InvalidTokenProgram.into());
+        }
+
         let authority_pub_key =
             Self::authority_id(program_id, pool_account_info.key, pool.bump_seed)?;
         if *authority_account_info.key != authority_pub_key {

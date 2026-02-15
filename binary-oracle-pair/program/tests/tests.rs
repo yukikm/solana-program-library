@@ -603,6 +603,87 @@ async fn test_deposit_with_program_authority() {
 }
 
 #[tokio::test]
+async fn test_deposit_rejects_wrong_pool_deposit_account() {
+    use solana_sdk::{
+        instruction::InstructionError,
+        transaction::TransactionError,
+    };
+
+    let (mut banks_client, payer, recent_blockhash) = program_test().start().await;
+
+    let deposit_amount = 100;
+
+    let pool = TestPool::new();
+    pool.init_pool(&mut banks_client, &payer, &recent_blockhash)
+        .await;
+
+    let user_account = Keypair::new();
+    let user_account_owner = Keypair::new();
+    let user_pass_account = Keypair::new();
+    let user_fail_account = Keypair::new();
+
+    pool.prepare_accounts_for_deposit(
+        &mut banks_client,
+        &payer,
+        &recent_blockhash,
+        deposit_amount,
+        deposit_amount,
+        &user_account,
+        &pool.authority,
+        &user_account_owner,
+        &user_pass_account,
+        &user_fail_account,
+    )
+    .await;
+
+    let user_balance_before = get_token_balance(&mut banks_client, &user_account.pubkey()).await;
+    assert_eq!(user_balance_before, deposit_amount);
+
+    // Attempt deposit while swapping the pool deposit token account for the user's own token account.
+    // Pre-fix this would allow minting PASS/FAIL tokens without actually depositing tokens.
+    let mut transaction = Transaction::new_with_payer(
+        &[instruction::deposit(
+            &id(),
+            &pool.pool_account.pubkey(),
+            &pool.authority,
+            &pool.authority,
+            &user_account.pubkey(),
+            &user_account.pubkey(),
+            &pool.token_pass_mint.pubkey(),
+            &pool.token_fail_mint.pubkey(),
+            &user_pass_account.pubkey(),
+            &user_fail_account.pubkey(),
+            &spl_token::id(),
+            deposit_amount,
+        )
+        .unwrap()],
+        Some(&payer.pubkey()),
+    );
+    transaction.sign(&[&payer], *recent_blockhash);
+
+    let err = banks_client.process_transaction(transaction).await.unwrap_err();
+    match err {
+        TransportError::TransactionError(TransactionError::InstructionError(
+            _,
+            InstructionError::Custom(code),
+        )) => {
+            assert_eq!(code, error::PoolError::InvalidDepositAccount as u32);
+        }
+        other => panic!("unexpected error: {other:?}"),
+    }
+
+    // Ensure no state changes occurred.
+    let user_balance_after = get_token_balance(&mut banks_client, &user_account.pubkey()).await;
+    assert_eq!(user_balance_after, deposit_amount);
+
+    let user_pass_tokens = get_token_balance(&mut banks_client, &user_pass_account.pubkey()).await;
+    assert_eq!(user_pass_tokens, 0);
+
+    let user_fail_tokens = get_token_balance(&mut banks_client, &user_fail_account.pubkey()).await;
+    assert_eq!(user_fail_tokens, 0);
+}
+
+#[tokio::test]
 async fn test_deposit_with_user_authority() {
     let (mut banks_client, payer, recent_blockhash) = program_test().start().await;
 
