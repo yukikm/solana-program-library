@@ -64,16 +64,21 @@ impl Processor {
             return Err(ProgramError::InvalidArgument);
         }
         if *parent_name_account.key != Pubkey::default() {
-            if !parent_name_owner.unwrap().is_signer {
+            let parent_name_owner = parent_name_owner.ok_or_else(|| {
+                msg!("Missing parent name owner account.");
+                ProgramError::NotEnoughAccountKeys
+            })?;
+
+            if !parent_name_owner.is_signer {
                 msg!("The given parent name account owner is not a signer.");
                 return Err(ProgramError::InvalidArgument);
-            } else {
-                let parent_name_record_header =
-                    NameRecordHeader::unpack_from_slice(&parent_name_account.data.borrow())?;
-                if &parent_name_record_header.owner != parent_name_owner.unwrap().key {
-                    msg!("The given parent name account owner is not correct.");
-                    return Err(ProgramError::InvalidArgument);
-                }
+            }
+
+            let parent_name_record_header =
+                NameRecordHeader::unpack_from_slice(&parent_name_account.data.borrow())?;
+            if &parent_name_record_header.owner != parent_name_owner.key {
+                msg!("The given parent name account owner is not correct.");
+                return Err(ProgramError::InvalidArgument);
             }
         }
         if name_owner.key == &Pubkey::default() {

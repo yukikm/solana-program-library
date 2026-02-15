@@ -5,8 +5,9 @@ use {
         processor, tokio, ProgramTest, ProgramTestBanksClientExt, ProgramTestContext,
     },
     solana_sdk::{
+        instruction::InstructionError,
         signature::{Keypair, Signer},
-        transaction::Transaction,
+        transaction::{Transaction, TransactionError},
         transport::TransportError,
     },
     spl_name_service::{
@@ -16,6 +17,103 @@ use {
     },
     std::str::FromStr,
 };
+
+#[tokio::test]
+async fn test_create_missing_parent_owner_account_fails_gracefully() {
+    let program_id = Pubkey::from_str("XCWuBvfNamesXCWuBvfkegQfZyiNwAJb9Ss623VQ5DA").unwrap();
+
+    let program_test = ProgramTest::new(
+        "spl_name_service",
+        program_id,
+        processor!(Processor::process_instruction),
+    );
+    let mut ctx = program_test.start_with_context().await;
+
+    // Create root name ".sol" first
+    let root_name = ".sol";
+    let tld_class = Keypair::new();
+    let owner = Keypair::new();
+
+    let hashed_root_name: Vec<u8> = hashv(&[(HASH_PREFIX.to_owned() + root_name).as_bytes()])
+        .as_ref()
+        .to_vec();
+    let (root_name_account_key, _) = get_seeds_and_key(
+        &program_id,
+        hashed_root_name.clone(),
+        Some(&tld_class.pubkey()),
+        None,
+    );
+
+    let space = 128usize;
+    let rent = ctx.banks_client.get_rent().await.unwrap();
+    let create_root_instruction = create(
+        program_id,
+        NameRegistryInstruction::Create {
+            hashed_name: hashed_root_name,
+            lamports: rent.minimum_balance(space.saturating_add(NameRecordHeader::LEN)),
+            space: space as u32,
+        },
+        root_name_account_key,
+        ctx.payer.pubkey(),
+        owner.pubkey(),
+        Some(tld_class.pubkey()),
+        None,
+        None,
+    )
+    .unwrap();
+
+    sign_send_instruction(&mut ctx, create_root_instruction, vec![&tld_class])
+        .await
+        .unwrap();
+
+    // Now attempt to create a child name that specifies a parent name account but *omits*
+    // the required parent owner account.
+    let name = "bonfida";
+    let sol_subdomains_class = Keypair::new();
+
+    let hashed_name: Vec<u8> = hashv(&[(HASH_PREFIX.to_owned() + name).as_bytes()])
+        .as_ref()
+        .to_vec();
+    let (name_account_key, _) = get_seeds_and_key(
+        &program_id,
+        hashed_name.clone(),
+        Some(&sol_subdomains_class.pubkey()),
+        Some(&root_name_account_key),
+    );
+
+    let create_child_missing_parent_owner = create(
+        program_id,
+        NameRegistryInstruction::Create {
+            hashed_name,
+            lamports: rent.minimum_balance(space.saturating_add(NameRecordHeader::LEN)),
+            space: space as u32,
+        },
+        name_account_key,
+        ctx.payer.pubkey(),
+        owner.pubkey(),
+        Some(sol_subdomains_class.pubkey()),
+        Some(root_name_account_key),
+        None, // <-- missing parent owner account
+    )
+    .unwrap();
+
+    let err = sign_send_instruction(
+        &mut ctx,
+        create_child_missing_parent_owner,
+        vec![&sol_subdomains_class],
+    )
+    .await
+    .unwrap_err();
+
+    // Ensure we get a normal program error rather than a panic/abort.
+    match err {
+        TransportError::TransactionError(TransactionError::InstructionError(
+            _,
+            InstructionError::NotEnoughAccountKeys,
+        )) => {}
+        other => panic!("unexpected error: {other:?}"),
+    }
+}
 
 #[tokio::test]
 async fn test_name_service() {
