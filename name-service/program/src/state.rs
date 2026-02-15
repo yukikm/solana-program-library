@@ -55,9 +55,23 @@ impl IsInitialized for NameRecordHeader {
     }
 }
 
-pub fn write_data(account: &AccountInfo, input: &[u8], offset: usize) {
+pub fn write_data(account: &AccountInfo, input: &[u8], offset: usize) -> Result<(), ProgramError> {
     let mut account_data = account.data.borrow_mut();
-    account_data[offset..offset.saturating_add(input.len())].copy_from_slice(input);
+    let end = offset.saturating_add(input.len());
+
+    // Prevent panics on invalid offsets/lengths by returning a program error instead.
+    if end > account_data.len() {
+        msg!(
+            "write_data out of bounds: offset={} len={} data_len={}",
+            offset,
+            input.len(),
+            account_data.len()
+        );
+        return Err(ProgramError::InvalidArgument);
+    }
+
+    account_data[offset..end].copy_from_slice(input);
+    Ok(())
 }
 
 ////////////////////////////////////////////////////////////

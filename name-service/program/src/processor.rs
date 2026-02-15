@@ -64,16 +64,21 @@ impl Processor {
             return Err(ProgramError::InvalidArgument);
         }
         if *parent_name_account.key != Pubkey::default() {
-            if !parent_name_owner.unwrap().is_signer {
+            // `parent_name_owner` is a required account whenever a non-default parent name is used.
+            // Without this explicit check, the `.unwrap()` below can panic, causing the program to
+            // abort (DoS for this instruction).
+            let parent_name_owner = parent_name_owner.ok_or(ProgramError::NotEnoughAccountKeys)?;
+
+            if !parent_name_owner.is_signer {
                 msg!("The given parent name account owner is not a signer.");
                 return Err(ProgramError::InvalidArgument);
-            } else {
-                let parent_name_record_header =
-                    NameRecordHeader::unpack_from_slice(&parent_name_account.data.borrow())?;
-                if &parent_name_record_header.owner != parent_name_owner.unwrap().key {
-                    msg!("The given parent name account owner is not correct.");
-                    return Err(ProgramError::InvalidArgument);
-                }
+            }
+
+            let parent_name_record_header =
+                NameRecordHeader::unpack_from_slice(&parent_name_account.data.borrow())?;
+            if &parent_name_record_header.owner != parent_name_owner.key {
+                msg!("The given parent name account owner is not correct.");
+                return Err(ProgramError::InvalidArgument);
             }
         }
         if name_owner.key == &Pubkey::default() {
@@ -165,7 +170,7 @@ impl Processor {
             name_account,
             &data,
             NameRecordHeader::LEN.saturating_add(offset as usize),
-        );
+        )?;
 
         Ok(())
     }
@@ -231,7 +236,7 @@ impl Processor {
         }
 
         // Overwrite the data with zeroes
-        write_data(name_account, &vec![0; name_account.data_len()], 0);
+        write_data(name_account, &vec![0; name_account.data_len()], 0)?;
 
         // Close the account by transferring the rent sol
         let source_amount: &mut u64 = &mut name_account.lamports.borrow_mut();
