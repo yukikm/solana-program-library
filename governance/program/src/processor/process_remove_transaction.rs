@@ -1,10 +1,13 @@
 //! Program state processor
 
 use {
-    crate::state::{
-        proposal::get_proposal_data,
-        proposal_transaction::get_proposal_transaction_data_for_proposal,
-        token_owner_record::get_token_owner_record_data_for_proposal_owner,
+    crate::{
+        error::GovernanceError,
+        state::{
+            proposal::get_proposal_data,
+            proposal_transaction::get_proposal_transaction_data_for_proposal,
+            token_owner_record::get_token_owner_record_data_for_proposal_owner,
+        },
     },
     solana_program::{
         account_info::{next_account_info, AccountInfo},
@@ -45,7 +48,10 @@ pub fn process_remove_transaction(program_id: &Pubkey, accounts: &[AccountInfo])
     dispose_account(proposal_transaction_info, beneficiary_info)?;
 
     let option = &mut proposal_data.options[proposal_transaction_data.option_index as usize];
-    option.transactions_count = option.transactions_count.checked_sub(1).unwrap();
+    option.transactions_count = option
+        .transactions_count
+        .checked_sub(1)
+        .ok_or(GovernanceError::NumericalOverflow)?;
 
     proposal_data.serialize(&mut proposal_info.data.borrow_mut()[..])?;
 

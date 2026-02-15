@@ -454,7 +454,7 @@ impl ProposalV2 {
     ) -> Result<ProposalState, ProgramError> {
         // Get the min vote weight required for options to pass
         let min_vote_threshold_weight =
-            get_min_vote_threshold_weight(vote_threshold, max_vote_weight).unwrap();
+            get_min_vote_threshold_weight(vote_threshold, max_vote_weight)?;
 
         // If the proposal has a reject option then any other option must beat it
         // regardless of the configured min_vote_threshold_weight
@@ -480,8 +480,9 @@ impl ProposalV2 {
                         best_succeeded_option_count = 1;
                     }
                     Ordering::Equal => {
-                        best_succeeded_option_count =
-                            best_succeeded_option_count.checked_add(1).unwrap()
+                        best_succeeded_option_count = best_succeeded_option_count
+                            .checked_add(1)
+                            .ok_or(GovernanceError::NumericalOverflow)?
                     }
                     Ordering::Less => {}
                 }
@@ -914,7 +915,9 @@ impl ProposalV2 {
                     }
 
                     if choice.weight_percentage > 0 {
-                        choice_count = choice_count.checked_add(1).unwrap();
+                        choice_count = choice_count
+                            .checked_add(1)
+                            .ok_or(GovernanceError::NumericalOverflow)?;
 
                         match self.vote_type {
                             VoteType::MultiChoice {
@@ -1065,12 +1068,20 @@ fn get_min_vote_threshold_weight(
 
     let numerator = (yes_vote_threshold_percentage as u128)
         .checked_mul(max_voter_weight as u128)
-        .unwrap();
+        .ok_or(GovernanceError::NumericalOverflow)?;
 
-    let mut yes_vote_threshold = numerator.checked_div(100).unwrap();
+    let mut yes_vote_threshold = numerator
+        .checked_div(100)
+        .ok_or(GovernanceError::NumericalOverflow)?;
 
-    if yes_vote_threshold.checked_mul(100).unwrap() < numerator {
-        yes_vote_threshold = yes_vote_threshold.checked_add(1).unwrap();
+    if yes_vote_threshold
+        .checked_mul(100)
+        .ok_or(GovernanceError::NumericalOverflow)?
+        < numerator
+    {
+        yes_vote_threshold = yes_vote_threshold
+            .checked_add(1)
+            .ok_or(GovernanceError::NumericalOverflow)?;
     }
 
     Ok(yes_vote_threshold as u64)

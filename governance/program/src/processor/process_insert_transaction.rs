@@ -75,12 +75,18 @@ pub fn process_insert_transaction(
         // If the index is below instructions_next_index then we are inserting into an existing
         // empty space
         Ordering::Equal => {
-            option.transactions_next_index = option.transactions_next_index.checked_add(1).unwrap();
+            option.transactions_next_index = option
+                .transactions_next_index
+                .checked_add(1)
+                .ok_or(GovernanceError::NumericalOverflow)?;
         }
         Ordering::Less => {}
     }
 
-    option.transactions_count = option.transactions_count.checked_add(1).unwrap();
+    option.transactions_count = option
+        .transactions_count
+        .checked_add(1)
+        .ok_or(GovernanceError::NumericalOverflow)?;
     proposal_data.serialize(&mut proposal_info.data.borrow_mut()[..])?;
 
     let proposal_transaction_data = ProposalTransactionV2 {

@@ -1,12 +1,15 @@
 //! Program state processor
 
 use {
-    crate::state::{
-        enums::{ProposalState, TransactionExecutionStatus},
-        governance::get_governance_data,
-        native_treasury::get_native_treasury_address_seeds,
-        proposal::{get_proposal_data_for_governance, OptionVoteResult},
-        proposal_transaction::get_proposal_transaction_data_for_proposal,
+    crate::{
+        error::GovernanceError,
+        state::{
+            enums::{ProposalState, TransactionExecutionStatus},
+            governance::get_governance_data,
+            native_treasury::get_native_treasury_address_seeds,
+            proposal::{get_proposal_data_for_governance, OptionVoteResult},
+            proposal_transaction::get_proposal_transaction_data_for_proposal,
+        },
     },
     solana_program::{
         account_info::{next_account_info, AccountInfo},
@@ -96,7 +99,10 @@ pub fn process_execute_transaction(program_id: &Pubkey, accounts: &[AccountInfo]
     }
 
     let option = &mut proposal_data.options[proposal_transaction_data.option_index as usize];
-    option.transactions_executed_count = option.transactions_executed_count.checked_add(1).unwrap();
+    option.transactions_executed_count = option
+        .transactions_executed_count
+        .checked_add(1)
+        .ok_or(GovernanceError::NumericalOverflow)?;
 
     // Checking for Executing and ExecutingWithErrors states because instruction can
     // still be executed after being flagged with error The check for

@@ -271,8 +271,7 @@ impl TokenOwnerRecordV2 {
         // TODO: Remove this check once all outstanding proposals on mainnet are
         // resolved
         if self.outstanding_proposal_count != 0 {
-            self.outstanding_proposal_count =
-                self.outstanding_proposal_count.checked_sub(1).unwrap();
+            self.outstanding_proposal_count = self.outstanding_proposal_count.saturating_sub(1);
         }
     }
 

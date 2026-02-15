@@ -95,7 +95,10 @@ pub fn process_add_signatory(
         0,
     )?;
 
-    proposal_data.signatories_count = proposal_data.signatories_count.checked_add(1).unwrap();
+    proposal_data.signatories_count = proposal_data
+        .signatories_count
+        .checked_add(1)
+        .ok_or(GovernanceError::NumericalOverflow)?;
     proposal_data.serialize(&mut proposal_info.data.borrow_mut()[..])?;
 
     Ok(())
