@@ -122,6 +122,7 @@ pub fn transfer_spl_tokens<'a>(
         return Err(ProgramError::IncorrectProgramId);
     }
 
+    // Avoid panics inside on-chain programs: propagate Instruction-building errors.
     let transfer_instruction = spl_token::instruction::transfer(
         &spl_token::id(),
         source_info.key,
@@ -129,8 +130,7 @@ pub fn transfer_spl_tokens<'a>(
         authority_info.key,
         &[],
         amount,
-    )
-    .unwrap();
+    )?;
 
     invoke(
         &transfer_instruction,
@@ -158,6 +158,7 @@ pub fn mint_spl_tokens_to<'a>(
         return Err(ProgramError::IncorrectProgramId);
     }
 
+    // Avoid panics inside on-chain programs: propagate Instruction-building errors.
     let mint_to_ix = spl_token::instruction::mint_to(
         &spl_token::id(),
         mint_info.key,
@@ -165,8 +166,7 @@ pub fn mint_spl_tokens_to<'a>(
         mint_authority_info.key,
         &[],
         amount,
-    )
-    .unwrap();
+    )?;
 
     invoke(
         &mint_to_ix,
@@ -208,6 +208,7 @@ pub fn transfer_spl_tokens_signed<'a>(
         return Err(ProgramError::InvalidSeeds);
     }
 
+    // Avoid panics inside on-chain programs: propagate Instruction-building errors.
     let transfer_instruction = spl_token::instruction::transfer(
         &spl_token::id(),
         source_info.key,
@@ -215,8 +216,7 @@ pub fn transfer_spl_tokens_signed<'a>(
         authority_info.key,
         &[],
         amount,
-    )
-    .unwrap();
+    )?;
 
     let mut signers_seeds = authority_seeds.to_vec();
     let bump = &[bump_seed];
@@ -263,6 +263,7 @@ pub fn burn_spl_tokens_signed<'a>(
         return Err(ProgramError::InvalidSeeds);
     }
 
+    // Avoid panics inside on-chain programs: propagate Instruction-building errors.
     let burn_ix = spl_token::instruction::burn(
         &spl_token::id(),
         token_account_info.key,
@@ -270,8 +271,7 @@ pub fn burn_spl_tokens_signed<'a>(
         authority_info.key,
         &[],
         amount,
-    )
-    .unwrap();
+    )?;
 
     let mut signers_seeds = authority_seeds.to_vec();
     let bump = &[bump_seed];
@@ -387,7 +387,7 @@ pub fn get_spl_token_mint_supply(mint_info: &AccountInfo) -> Result<u64, Program
     assert_is_valid_spl_token_mint(mint_info)?;
     // In token program, 36, 8, 1, 1 is the layout, where the first 8 is supply u64.
     // so we start at 36.
-    let data = mint_info.try_borrow_data().unwrap();
+    let data = mint_info.try_borrow_data()?;
     let bytes = array_ref![data, 36, 8];
 
     Ok(u64::from_le_bytes(*bytes))
@@ -400,7 +400,7 @@ pub fn get_spl_token_mint_authority(
 ) -> Result<COption<Pubkey>, ProgramError> {
     assert_is_valid_spl_token_mint(mint_info)?;
     // In token program, 36, 8, 1, 1 is the layout, where the first 36 is authority.
-    let data = mint_info.try_borrow_data().unwrap();
+    let data = mint_info.try_borrow_data()?;
     let bytes = array_ref![data, 0, 36];
 
     unpack_coption_pubkey(bytes)
